@@ -15,6 +15,7 @@ type Payment struct {
 	Currency  string    `json:"currency"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"create_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 var (
@@ -70,6 +71,62 @@ func getPayment(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(p)
 }
 
+func updatePayment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	status := r.URL.Query().Get("status")
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	p, exists := payments[id]
+	if !exists {
+		http.Error(w, "Payment not found", http.StatusNotFound)
+		return
+	}
+
+	p.Status = status
+	p.UpdatedAt = time.Now()
+
+	payments[id] = p
+	json.NewEncoder(w).Encode(p)
+
+}
+
+func deletePayment(w http.ResponseWriter, r *http.Request) {
+
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.Atoi(idStr)
+
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	_, exists := payments[id]
+	if !exists {
+		http.Error(w, "Paymnet not found", http.StatusNotFound)
+		return
+	}
+
+	delete(payments, id)
+
+	w.Write([]byte("Payment Deleted"))
+}
+
 func listPayments(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -83,14 +140,28 @@ func listPayments(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
-	http.HandleFunc("/payments/create", createPayment)
-	http.HandleFunc("/payments/get", getPayment)
-	http.HandleFunc("/payments/list", listPayments)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/payments/create", createPayment)
+	mux.HandleFunc("/payments/get", getPayment)
+	mux.HandleFunc("/payments/list", listPayments)
+	mux.HandleFunc("/payments/delete", deletePayment)
+	mux.HandleFunc("/payments/update-status", updatePayment)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("welcome to payment - service"))
 	})
 
+	loggedMux := loggingMiddleware(mux)
+
 	log.Println("Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", loggedMux))
 }
